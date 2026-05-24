@@ -1,18 +1,17 @@
 #!/bin/bash
 # ============================================
 # Neon AWS 区域延迟测试 - 专业版
-# 支持: TCP Ping、HTTP 延迟、结果排序、颜色输出
+# 支持: TCP Ping、结果排序、颜色输出
+# 无需 bc，纯 bash 整数运算
 # ============================================
 
-# 颜色定义
 RED='\033[0;31m'
 YELLOW='\033[1;33m'
 GREEN='\033[0;32m'
 CYAN='\033[0;36m'
 BOLD='\033[1m'
-NC='\033[0m' # 无颜色
+NC='\033[0m'
 
-# Neon 各区域对应的 AWS 端点
 declare -A REGIONS=(
   ["US East 1 (N. Virginia)"]="ec2.us-east-1.amazonaws.com"
   ["US East 2 (Ohio)"]="ec2.us-east-2.amazonaws.com"
@@ -21,7 +20,7 @@ declare -A REGIONS=(
   ["Asia Pacific 2 (Sydney)"]="ec2.ap-southeast-2.amazonaws.com"
   ["Europe Central 1 (Frankfurt)"]="ec2.eu-central-1.amazonaws.com"
   ["Europe West 2 (London)"]="ec2.eu-west-2.amazonaws.com"
-  ["South America East 1 (São Paulo)"]="ec2.sa-east-1.amazonaws.com"
+  ["South America East 1 (Sao Paulo)"]="ec2.sa-east-1.amazonaws.com"
 )
 
 PING_COUNT=5
@@ -29,19 +28,17 @@ PORT=443
 TIMEOUT=5
 RESULTS=()
 
-# 获取延迟颜色
 get_color() {
   local ms=$1
-  if (( $(echo "$ms < 100" | bc -l) )); then
+  if [[ "$ms" =~ ^[0-9]+$ ]] && (( ms < 100 )); then
     echo -e "${GREEN}"
-  elif (( $(echo "$ms < 200" | bc -l) )); then
+  elif [[ "$ms" =~ ^[0-9]+$ ]] && (( ms < 200 )); then
     echo -e "${YELLOW}"
   else
     echo -e "${RED}"
   fi
 }
 
-# TCP 连接延迟测试
 tcp_ping() {
   local host=$1
   local latencies=()
@@ -53,7 +50,7 @@ tcp_ping() {
       end=$(date +%s%N)
       diff=$(( (end - start) / 1000000 ))
       latencies+=($diff)
-      exec 3>&-
+      exec 3>&- 2>/dev/null
     fi
     sleep 0.2
   done
@@ -63,7 +60,6 @@ tcp_ping() {
     return
   fi
 
-  # 计算最小、平均、最大
   local sum=0 min=${latencies[0]} max=${latencies[0]}
   for v in "${latencies[@]}"; do
     sum=$((sum + v))
@@ -75,36 +71,34 @@ tcp_ping() {
   echo "${min}|${avg}|${max}|${#latencies[@]}"
 }
 
-# 打印标题
 echo ""
 echo -e "${BOLD}${CYAN}╔══════════════════════════════════════════════════════════════════╗${NC}"
 echo -e "${BOLD}${CYAN}║          Neon Database 区域延迟测试 (TCP Port 443)              ║${NC}"
 echo -e "${BOLD}${CYAN}╚══════════════════════════════════════════════════════════════════╝${NC}"
-echo -e "${BOLD}$(printf '%-35s %-10s %-10s %-10s %-8s\n' '区域' '最低(ms)' '平均(ms)' '最高(ms)' '成功/总数')${NC}"
+echo -e "${BOLD}$(printf '%-38s %-10s %-10s %-10s %-8s\n' '区域' '最低(ms)' '平均(ms)' '最高(ms)' '成功/总数')${NC}"
 echo -e "─────────────────────────────────────────────────────────────────"
 
-# 逐个测试
 for region in "${!REGIONS[@]}"; do
   host="${REGIONS[$region]}"
-  echo -ne "  测试中: ${region}...${NC}\r"
+  echo -ne "  测试中: ${region}...   \r"
 
   result=$(tcp_ping "$host")
 
   if [ "$result" == "timeout" ]; then
-    printf "%-35s ${RED}%-10s %-10s %-10s %-8s${NC}\n" \
+    printf "%-38s ${RED}%-10s %-10s %-10s %-8s${NC}\n" \
       "$region" "超时" "-" "-" "0/${PING_COUNT}"
     RESULTS+=("9999|9999|9999|$region|0")
   else
     IFS='|' read -r mn avg mx cnt <<< "$result"
     color=$(get_color "$avg")
-    printf "%-35s ${color}%-10s %-10s %-10s${NC} %-8s\n" \
+    printf "%-38s ${color}%-10s %-10s %-10s${NC} %-8s\n" \
       "$region" "${mn}ms" "${avg}ms" "${mx}ms" "${cnt}/${PING_COUNT}"
     RESULTS+=("${avg}|${mn}|${mx}|${region}|${cnt}")
   fi
 done
 
-# 排序并输出最优推荐
 echo -e "─────────────────────────────────────────────────────────────────"
+
 SORTED=$(printf '%s\n' "${RESULTS[@]}" | sort -t'|' -k1 -n)
 BEST=$(echo "$SORTED" | head -1)
 IFS='|' read -r avg mn mx best_region cnt <<< "$BEST"
@@ -117,17 +111,16 @@ else
   echo -e "${RED}所有区域均超时，请检查网络连接。${NC}"
 fi
 
-# 保存结果到文件
 OUTPUT_FILE="neon_latency_$(date +%Y%m%d_%H%M%S).txt"
 {
   echo "Neon 区域延迟测试结果 - $(date)"
   echo "================================================"
-  printf '%-35s %-10s %-10s %-10s\n' '区域' '最低(ms)' '平均(ms)' '最高(ms)'
+  printf '%-38s %-10s %-10s %-10s\n' '区域' '最低(ms)' '平均(ms)' '最高(ms)'
   echo "------------------------------------------------"
-  for r in $SORTED; do
+  while IFS= read -r r; do
     IFS='|' read -r avg mn mx region cnt <<< "$r"
-    printf '%-35s %-10s %-10s %-10s\n' "$region" "${mn}ms" "${avg}ms" "${mx}ms"
-  done
+    printf '%-38s %-10s %-10s %-10s\n' "$region" "${mn}ms" "${avg}ms" "${mx}ms"
+  done <<< "$SORTED"
 } > "$OUTPUT_FILE"
 
 echo ""
